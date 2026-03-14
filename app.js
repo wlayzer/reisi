@@ -1,7 +1,8 @@
 // ─── Config ───────────────────────────────────────────────────────────────────
-const API_URL = 'https://api.peatus.ee/routing/v1/routers/estonia/index/graphql';
+const API_URL    = 'https://api.peatus.ee/routing/v1/routers/estonia/index/graphql';
 const GEOCODE_URL = 'https://nominatim.openstreetmap.org/search';
 const PELIAS_URL  = 'https://api.peatus.ee/geocoding/v1/autocomplete';
+const OSRM_URL    = 'https://router.project-osrm.org/route/v1/driving';
 
 // Mode display config
 const MODES = {
@@ -29,6 +30,32 @@ function getCachedRoute(key) {
   // Cache valid for 2 hours
   if (Date.now() - item.ts > 7200000) return null;
   return item.data;
+}
+
+// ─── Drive time ───────────────────────────────────────────────────────────────
+async function fetchDriveTime(from, to) {
+  const url = `${OSRM_URL}/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false`;
+  const res = await fetch(url);
+  const json = await res.json();
+  if (json.code !== 'Ok') return null;
+  return Math.round(json.routes[0].duration / 60); // minutes
+}
+
+// ─── Prediction learning (Option A) ───────────────────────────────────────────
+function logPrediction(key, minutes) {
+  const slot = `pred_${key}_${new Date().getDay()}_${new Date().getHours()}`;
+  const history = JSON.parse(localStorage.getItem(slot) || '[]');
+  history.push(minutes);
+  localStorage.setItem(slot, JSON.stringify(history.slice(-10)));
+}
+function getAvgPrediction(key) {
+  const h = new Date().getHours();
+  const d = new Date().getDay();
+  // Check nearby hour slots too (±1h)
+  const slots = [d + '_' + (h - 1), d + '_' + h, d + '_' + (h + 1)];
+  const all = slots.flatMap(s => JSON.parse(localStorage.getItem(`pred_${key}_${s}`) || '[]'));
+  if (all.length < 3) return null;
+  return Math.round(all.reduce((a, b) => a + b, 0) / all.length);
 }
 
 // ─── Screens ──────────────────────────────────────────────────────────────────
@@ -110,7 +137,7 @@ async function fetchRoute(from, to) {
           departureDelay
           from { name lat lon }
           to   { name lat lon }
-          trip { routeShortName }
+          trip { routeShortName agency { name } }
         }
       }
     }
@@ -134,64 +161,120 @@ async function fetchRoute(from, to) {
 // ─── Real-time badge ──────────────────────────────────────────────────────────
 function realtimeBadge(leg) {
   if (!leg.realTime) return '';
-  const delaySec = leg.departureDelay || 0;
-  const delayMin = Math.round(delaySec / 60);
-  if (delayMin <= 1)  return '<span style="color:#2BC48A;font-size:11px">● õigeaegselt</span>';
-  if (delayMin <= 5)  return `<span style="color:#FFA726;font-size:11px">● +${delayMin} min</span>`;
-  return `<span style="color:#EF5350;font-size:11px">● +${delayMin} min hilja</span>`;
+  const delayMin = Math.round((leg.departureDelay || 0) / 60);
+  if (delayMin <= 1)  return '<span style="color:#2BC48A;font-size:10px">● õigeaegselt</span>';
+  if (delayMin <= 5)  return `<span style="color:#FFA726;font-size:10px">● +${delayMin} min</span>`;
+  return `<span style="color:#EF5350;font-size:10px">● +${delayMin} min hilja</span>`;
 }
 
 // ─── Render route ─────────────────────────────────────────────────────────────
 function renderItinerary(it, destName) {
   const legs = it.legs;
-  let html = `
-    <div class="flex justify-between items-baseline mb-4">
-      <span class="text-2xl font-bold">${formatDuration(it.duration)}</span>
-      <span class="text-[#8B8FA8] text-sm">Kohal kell <span class="text-white font-semibold">${formatTime(it.endTime)}</span></span>
-    </div>
-    <div>`;
+  const walkLegs = legs.filter(l => l.mode === 'WALK');
+  const totalWalkDist = Math.round(walkLegs.reduce((s, l) => s + (l.distance || 0), 0));
+  const totalWalkMins = Math.round(walkLegs.reduce((s, l) => s + l.duration, 0) / 60);
+
+  // Build timeline items
+  const items = [];
+  items.push({ type: 'depart', leg: legs[0], isFirst: true });
 
   legs.forEach((leg, i) => {
-    const m = MODES[leg.mode] || MODES.BUS;
-    const isLast = i === legs.length - 1;
+    const nextLeg = legs[i + 1];
+    items.push({ type: 'leg', leg });
 
-    // Stop row
-    html += `
-      <div class="leg-row">
-        <div class="leg-line-col">
-          <div class="leg-dot" style="background:${m.color}"></div>
-          ${!isLast ? `<div class="leg-vert-line" style="background:${m.line}33"></div>` : ''}
-        </div>
-        <div class="leg-content">
-          <div class="flex items-baseline gap-2 mb-1">
-            <span class="text-sm font-semibold text-[#8B8FA8]">${formatTime(leg.startTime)}</span>
-            <span class="text-sm font-medium truncate">${leg.from.name === 'Origin' ? '📍 Sinu asukoht' : leg.from.name}</span>
-          </div>
-          <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium mb-1"
-               style="background:${m.color}18; color:${m.color}">
-            <span>${m.icon}</span>
-            <span>${leg.mode === 'WALK'
-              ? `Kõnni ${formatDuration(leg.duration)} · ${formatDist(leg.distance)}`
-              : `${leg.trip?.routeShortName || m.label}  →  ${leg.to.name}`
-            }</span>
-            ${leg.mode !== 'WALK' ? realtimeBadge(leg) : ''}
-          </div>
-        </div>
-      </div>`;
+    if (!nextLeg) {
+      const name = leg.to.name === 'Destination' ? destName : leg.to.name;
+      items.push({ type: 'arrive', time: leg.endTime, name, color: (MODES[leg.mode] || MODES.BUS).color, isLast: true });
+    } else {
+      const waitMin = Math.round((nextLeg.startTime - leg.endTime) / 60000);
+      if (waitMin >= 1) {
+        items.push({ type: 'arrive', time: leg.endTime, name: leg.to.name, color: (MODES[leg.mode] || MODES.BUS).color, isLast: false });
+        items.push({ type: 'wait', minutes: waitMin });
+        items.push({ type: 'depart', leg: nextLeg, isFirst: false });
+      }
+    }
+  });
 
-    // Final stop
-    if (isLast) {
+  // Header
+  let html = `
+    <div class="flex justify-between items-start mb-4">
+      <span class="text-2xl font-bold">${formatDuration(it.duration)}</span>
+      <div class="text-right">
+        <div class="text-sm">Kohal kell <span class="font-bold">${formatTime(it.endTime)}</span></div>
+        <div class="text-[#8B8FA8] text-xs mt-0.5">🚶 ${totalWalkMins} min · ${formatDist(totalWalkDist)}</div>
+      </div>
+    </div><div>`;
+
+  // Render items
+  items.forEach(item => {
+    if (item.type === 'depart') {
+      const m = MODES[item.leg.mode] || MODES.BUS;
+      const name = item.isFirst && item.leg.from.name === 'Origin' ? '📍 Sinu asukoht' : item.leg.from.name;
       html += `
         <div class="leg-row">
           <div class="leg-line-col">
-            <div class="leg-dot" style="background:${m.color}; box-shadow:0 0 0 3px ${m.color}33"></div>
+            <div class="leg-dot" style="background:${m.color}"></div>
+            <div class="leg-vert-line" style="background:${m.color}44"></div>
           </div>
           <div class="leg-content">
-            <div class="flex items-baseline gap-2">
-              <span class="text-sm font-semibold text-[#8B8FA8]">${formatTime(leg.endTime)}</span>
-              <span class="text-sm font-bold">${leg.to.name === 'Destination' ? destName : leg.to.name}</span>
-              <span class="text-green-400 text-xs">✓</span>
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-sm font-bold text-[#8B8FA8] min-w-[44px]">${formatTime(item.leg.startTime)}</span>
+              <span class="text-sm font-medium">${name}</span>
+              ${!item.isFirst ? '<span class="text-xs text-[#8B8FA8]">lahkub</span>' : ''}
             </div>
+          </div>
+        </div>`;
+    }
+
+    else if (item.type === 'leg') {
+      const leg = item.leg;
+      const m = MODES[leg.mode] || MODES.BUS;
+      const operator = leg.trip?.agency?.name || '';
+      html += `
+        <div class="leg-row">
+          <div class="leg-line-col">
+            <div class="leg-vert-line" style="background:${m.color}44"></div>
+          </div>
+          <div class="leg-content">
+            <div class="inline-flex flex-wrap items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium mb-2" style="background:${m.color}15; color:${m.color}">
+              <span>${m.icon}</span>
+              ${leg.mode === 'WALK'
+                ? `<span>Kõnni ${formatDuration(leg.duration)} · ${formatDist(leg.distance)}</span>`
+                : `<span>${leg.trip?.routeShortName || m.label} → ${leg.to.name}</span>
+                   <span style="opacity:0.7">saabub ${formatTime(leg.endTime)}</span>
+                   ${operator ? `<span style="opacity:0.5">· ${operator}</span>` : ''}
+                   ${realtimeBadge(leg)}`
+              }
+            </div>
+          </div>
+        </div>`;
+    }
+
+    else if (item.type === 'arrive') {
+      html += `
+        <div class="leg-row">
+          <div class="leg-line-col">
+            <div class="leg-dot" style="background:${item.color}${item.isLast ? ';box-shadow:0 0 0 4px ' + item.color + '33;width:16px;height:16px' : ''}"></div>
+            ${!item.isLast ? '' : ''}
+          </div>
+          <div class="leg-content pb-0">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-bold text-[#8B8FA8] min-w-[44px]">${formatTime(item.time)}</span>
+              <span class="text-sm ${item.isLast ? 'font-bold' : ''}">${item.name}</span>
+              ${item.isLast ? '<span class="text-[#2BC48A]">✓</span>' : '<span class="text-xs text-[#8B8FA8]">saabus</span>'}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    else if (item.type === 'wait') {
+      html += `
+        <div class="leg-row" style="min-height:32px">
+          <div class="leg-line-col">
+            <div style="width:2px;flex:1;margin:2px auto;background:repeating-linear-gradient(to bottom,#8B8FA855 0,#8B8FA855 4px,transparent 4px,transparent 8px)"></div>
+          </div>
+          <div class="leg-content flex items-center" style="padding-bottom:6px">
+            <span class="text-xs px-2 py-1 rounded-full" style="background:#FFA72618;color:#FFA726">⏳ Oota ${item.minutes} min</span>
           </div>
         </div>`;
     }
@@ -222,13 +305,16 @@ async function navigate(key) {
 
   document.getElementById('loading-text').textContent = 'Otsin parimat marsruuti...';
 
-  let itineraries;
+  let itineraries, driveMin;
   try {
-    itineraries = await fetchRoute(from, dest);
+    [itineraries, driveMin] = await Promise.all([
+      fetchRoute(from, dest),
+      fetchDriveTime(from, dest).catch(() => null)
+    ]);
   } catch (e) {
     console.error('API error:', e);
     const cached = getCachedRoute(key);
-    if (cached) { showRoute(key, cached, true); return; }
+    if (cached) { showRoute(key, cached, true, null, null); return; }
     alert(`Marsruudi otsimine ebaõnnestus:\n${e.message}\n\nKontrolli internetiühendust.`);
     showScreen('screen-main');
     return;
@@ -240,17 +326,39 @@ async function navigate(key) {
     return;
   }
 
+  // Log prediction for learning
+  if (key) logPrediction(key, Math.round(itineraries[0].duration / 60));
+
   _currentRouteKey = key;
   cacheRoute(key, itineraries);
-  showRoute(key, itineraries, false);
+  showRoute(key, itineraries, false, null, driveMin, dest);
 }
 
-function showRoute(key, itineraries, fromCache, overrideTitle) {
-  const dest = key ? getPlace(key) : null;
+function showRoute(key, itineraries, fromCache, overrideTitle, driveMin, destObj) {
+  const dest = destObj || (key ? getPlace(key) : null);
   const title = overrideTitle
     ? '📍 ' + overrideTitle
     : key === 'work' ? '🏢 ' + dest.name : '🏠 ' + dest.name;
   document.getElementById('route-title').textContent = title;
+
+  // Drive time + Waze button
+  const driveEl = document.getElementById('route-drive-info');
+  if (dest && (driveMin || true)) {
+    const wazeUrl = `waze://?ll=${dest.lat},${dest.lon}&navigate=yes`;
+    const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lon}&travelmode=driving`;
+    driveEl.innerHTML = `
+      <div class="flex items-center gap-3 px-6 py-3 border-t border-[#252838]">
+        ${driveMin ? `<span class="text-xs text-[#8B8FA8]">🚗 ~${driveMin} min autoga</span>` : ''}
+        <a href="${wazeUrl}" onclick="if(!navigator.userAgent.includes('iPhone')){window.open('${gmapsUrl}');return false;}"
+          class="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold"
+          style="background:#33CCFF18;color:#33CCFF">
+          Ava Waze →
+        </a>
+      </div>`;
+    driveEl.classList.remove('hidden');
+  } else {
+    driveEl.classList.add('hidden');
+  }
   document.getElementById('route-cache-badge').classList.toggle('hidden', !fromCache);
 
   const container = document.getElementById('route-itineraries');
@@ -265,10 +373,10 @@ function showRoute(key, itineraries, fromCache, overrideTitle) {
         <p class="text-xs text-[#8B8FA8] mb-3 font-medium">Valik ${i + 1}</p>
         ${renderItinerary(it, destLabel)}`;
     } else {
-      const destLabel = overrideTitle || (dest ? dest.name : '');
+      const dLabel = overrideTitle || (dest ? dest.name : '');
       card.innerHTML = `
         <p class="text-xs text-[#3D9CF0] mb-3 font-medium">⚡ KIIREIM</p>
-        ${renderItinerary(it, destLabel)}`;
+        ${renderItinerary(it, dLabel)}`;
     }
     container.appendChild(card);
   });
@@ -406,9 +514,12 @@ async function navigateTo(idx, source) {
 
   document.getElementById('loading-text').textContent = 'Otsin marsruuti...';
 
-  let itineraries;
+  let itineraries, driveMin;
   try {
-    itineraries = await fetchRoute(from, place);
+    [itineraries, driveMin] = await Promise.all([
+      fetchRoute(from, place),
+      fetchDriveTime(from, place).catch(() => null)
+    ]);
   } catch (e) {
     alert(`Marsruudi otsimine ebaõnnestus:\n${e.message}`);
     showScreen('screen-main');
@@ -421,8 +532,8 @@ async function navigateTo(idx, source) {
     return;
   }
 
-  _currentRouteKey = null; // not a saved place
-  showRoute(null, itineraries, false, place.name);
+  _currentRouteKey = null;
+  showRoute(null, itineraries, false, place.name, driveMin, place);
 }
 
 // ─── Geocoding ────────────────────────────────────────────────────────────────
@@ -606,7 +717,10 @@ async function updateCardQuickInfo(key, from) {
     const itineraries = await fetchRoute(from, dest);
     if (!itineraries || !itineraries.length) { el.textContent = 'Marsruuti ei leitud'; return; }
     cacheRoute(key, itineraries);
-    el.textContent = buildQuickText(itineraries[0]);
+    logPrediction(key, Math.round(itineraries[0].duration / 60));
+    const avg = getAvgPrediction(key);
+    const avgText = avg ? ` · tavaliselt ~${avg} min` : '';
+    el.textContent = buildQuickText(itineraries[0]) + avgText;
   } catch (e) {
     showCachedQuickInfo(key);
   }
