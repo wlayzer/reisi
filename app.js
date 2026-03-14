@@ -1,5 +1,5 @@
 // ─── Config ───────────────────────────────────────────────────────────────────
-const API_URL = 'https://api.peatus.ee/graphql';
+const API_URL = 'https://api.peatus.ee/routing/v1/routers/estonia/index/graphql';
 const GEOCODE_URL = 'https://nominatim.openstreetmap.org/search';
 
 // Mode display config
