@@ -121,7 +121,7 @@ async function fetchRoute(from, to) {
 
 // ─── Real-time badge ──────────────────────────────────────────────────────────
 function realtimeBadge(leg) {
-  if (!leg.realTime) return '<span style="opacity:0.4;font-size:10px">sõiduplaani järgi</span>';
+  if (!leg.realTime) return '';
   const delaySec = leg.departureDelay || 0;
   const delayMin = Math.round(delaySec / 60);
   if (delayMin <= 1)  return '<span style="color:#2BC48A;font-size:11px">● õigeaegselt</span>';
