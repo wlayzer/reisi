@@ -96,8 +96,22 @@
       </button>
     </div>
 
+    <!-- Ad-hoc search -->
+    <div class="mt-4">
+      <div class="flex items-center gap-3 bg-[#1E2030] border border-[#252838] rounded-2xl px-4 py-3">
+        <span class="text-[#8B8FA8]">🔍</span>
+        <input id="main-search-input" type="text" placeholder="Otsi sihtkohta..."
+          autocomplete="off"
+          class="flex-1 bg-transparent text-white text-sm outline-none placeholder-[#8B8FA8]"
+          oninput="onMainSearch(this.value)"
+          onfocus="onMainSearchFocus()">
+        <button id="main-search-clear" onclick="clearMainSearch()" class="hidden text-[#8B8FA8] text-lg px-1">✕</button>
+      </div>
+      <div id="main-search-results" class="hidden mt-2 bg-[#1E2030] border border-[#252838] rounded-2xl overflow-hidden"></div>
+    </div>
+
     <!-- Settings button -->
-    <button onclick="openSetup()" class="mt-6 w-full py-3 text-[#8B8FA8] text-sm flex items-center justify-center gap-2">
+    <button onclick="openSetup()" class="mt-4 w-full py-3 text-[#8B8FA8] text-sm flex items-center justify-center gap-2">
       ⚙️ Seaded
     </button>
   </div>

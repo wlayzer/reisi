@@ -233,9 +233,12 @@ async function navigate(key) {
   showRoute(key, itineraries, false);
 }
 
-function showRoute(key, itineraries, fromCache) {
-  const dest = getPlace(key);
-  document.getElementById('route-title').textContent = key === 'work' ? '🏢 ' + dest.name : '🏠 ' + dest.name;
+function showRoute(key, itineraries, fromCache, overrideTitle) {
+  const dest = key ? getPlace(key) : null;
+  const title = overrideTitle
+    ? '📍 ' + overrideTitle
+    : key === 'work' ? '🏢 ' + dest.name : '🏠 ' + dest.name;
+  document.getElementById('route-title').textContent = title;
   document.getElementById('route-cache-badge').classList.toggle('hidden', !fromCache);
 
   const container = document.getElementById('route-itineraries');
@@ -245,18 +248,148 @@ function showRoute(key, itineraries, fromCache) {
     const card = document.createElement('div');
     card.className = 'route-card' + (i > 0 ? ' route-card-alt mt-2' : '');
     if (i > 0) {
-      card.innerHTML = `
+      const destLabel = overrideTitle || (dest ? dest.name : '');
+    card.innerHTML = `
         <p class="text-xs text-[#8B8FA8] mb-3 font-medium">Valik ${i + 1}</p>
-        ${renderItinerary(it, dest.name)}`;
+        ${renderItinerary(it, destLabel)}`;
     } else {
+      const destLabel = overrideTitle || (dest ? dest.name : '');
       card.innerHTML = `
         <p class="text-xs text-[#3D9CF0] mb-3 font-medium">⚡ KIIREIM</p>
-        ${renderItinerary(it, dest.name)}`;
+        ${renderItinerary(it, destLabel)}`;
     }
     container.appendChild(card);
   });
 
   showScreen('screen-route');
+}
+
+// ─── Search history ───────────────────────────────────────────────────────────
+function getHistory() {
+  return JSON.parse(localStorage.getItem('search_history') || '[]');
+}
+function addToHistory(place) {
+  let h = getHistory().filter(p => p.name !== place.name);
+  h.unshift(place);
+  localStorage.setItem('search_history', JSON.stringify(h.slice(0, 5)));
+}
+
+// ─── Main screen search ───────────────────────────────────────────────────────
+let _searchTimer = null;
+
+function onMainSearchFocus() {
+  const input = document.getElementById('main-search-input');
+  if (!input.value.trim()) showSearchHistory();
+}
+
+function onMainSearch(value) {
+  document.getElementById('main-search-clear').classList.toggle('hidden', !value);
+  clearTimeout(_searchTimer);
+  if (!value.trim()) { showSearchHistory(); return; }
+  _searchTimer = setTimeout(() => runMainSearch(value), 350);
+}
+
+function clearMainSearch() {
+  document.getElementById('main-search-input').value = '';
+  document.getElementById('main-search-clear').classList.add('hidden');
+  showSearchHistory();
+}
+
+function showSearchHistory() {
+  const history = getHistory();
+  const el = document.getElementById('main-search-results');
+  if (!history.length) { el.classList.add('hidden'); return; }
+
+  el.innerHTML = `
+    <p class="text-[#8B8FA8] text-xs px-4 pt-3 pb-1 font-medium">VIIMASED OTSINGUD</p>
+    ${history.map((p, i) => `
+      <button onclick="navigateTo(${i}, 'history')"
+        class="w-full text-left px-4 py-3 text-sm flex items-center gap-3 border-t border-[#252838] first:border-0 active:bg-[#252838]">
+        <span class="text-[#8B8FA8]">🕐</span>
+        <span class="truncate">${p.name}</span>
+      </button>`).join('')}`;
+  el.classList.remove('hidden');
+}
+
+async function runMainSearch(query) {
+  const el = document.getElementById('main-search-results');
+  el.innerHTML = '<p class="text-[#8B8FA8] text-xs px-4 py-3">Otsin...</p>';
+  el.classList.remove('hidden');
+
+  try {
+    const params = new URLSearchParams({ q: query, format: 'json', countrycodes: 'ee', limit: 5, addressdetails: 1 });
+    const res = await fetch(`${GEOCODE_URL}?${params}`, {
+      headers: { 'Accept-Language': 'et', 'User-Agent': 'ReisiApp/1.0' }
+    });
+    const results = await res.json();
+
+    if (!results.length) {
+      el.innerHTML = '<p class="text-[#8B8FA8] text-xs px-4 py-3">Tulemusi ei leitud.</p>';
+      return;
+    }
+
+    // Store results temporarily for tap handler
+    window._searchResults = results.map(r => ({
+      name: r.display_name.split(',').slice(0, 3).join(', '),
+      lat: parseFloat(r.lat),
+      lon: parseFloat(r.lon)
+    }));
+
+    el.innerHTML = window._searchResults.map((r, i) => `
+      <button onclick="navigateTo(${i}, 'search')"
+        class="w-full text-left px-4 py-3 text-sm flex items-center gap-3 border-t border-[#252838] first:border-0 active:bg-[#252838]">
+        <span class="text-[#8B8FA8]">📍</span>
+        <span class="truncate">${r.name}</span>
+      </button>`).join('');
+  } catch (e) {
+    el.innerHTML = '<p class="text-[#8B8FA8] text-xs px-4 py-3">Viga otsingus.</p>';
+  }
+}
+
+async function navigateTo(idx, source) {
+  const place = source === 'history' ? getHistory()[idx] : window._searchResults[idx];
+  if (!place) return;
+
+  // Save to history
+  addToHistory(place);
+
+  // Close search UI
+  document.getElementById('main-search-input').value = '';
+  document.getElementById('main-search-clear').classList.add('hidden');
+  document.getElementById('main-search-results').classList.add('hidden');
+
+  // Navigate
+  showScreen('screen-loading');
+  document.getElementById('loading-text').textContent = 'Tuvastame asukohta...';
+
+  let from;
+  try {
+    from = await getLocation();
+  } catch (e) {
+    alert('GPS ei tööta. Kontrolli asukoaluba.');
+    showScreen('screen-main');
+    return;
+  }
+
+  document.getElementById('loading-text').textContent = 'Otsin marsruuti...';
+
+  let itineraries;
+  try {
+    itineraries = await fetchRoute(from, place);
+  } catch (e) {
+    alert(`Marsruudi otsimine ebaõnnestus:\n${e.message}`);
+    showScreen('screen-main');
+    return;
+  }
+
+  if (!itineraries || !itineraries.length) {
+    alert('Marsruuti ei leitud.');
+    showScreen('screen-main');
+    return;
+  }
+
+  _currentRouteKey = null; // not a saved place
+  showRoute(null, itineraries, false, place.name);
 }
 
 // ─── Geocoding ────────────────────────────────────────────────────────────────
