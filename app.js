@@ -10,7 +10,8 @@ const AT_DESTINATION_METERS  = 200;                  // considered "at destinati
 const MIN_PREDICTIONS        = 3;                    // min data points for avg
 const MAX_PREDICTION_HISTORY = 10;                   // per-slot cap
 const SEARCH_DEBOUNCE_MS     = 350;
-const QUICK_INFO_INTERVAL_MS = 60 * 1000;            // 1 minute
+const QUICK_INFO_INTERVAL_MS  = 60 * 1000;            // 1 minute
+const QUICK_INFO_REFRESH_MS   = 5 * 60 * 1000;        // min gap between GPS+API refreshes
 const GPS_TIMEOUT_MS         = 12000;
 const API_TIMEOUT_MS         = 10000;                // abort hung API calls after 10 s
 
@@ -255,7 +256,6 @@ function renderItinerary(it, destName) {
     else if (item.type === 'leg') {
       const leg = item.leg;
       const m = MODES[leg.mode] || MODES.BUS;
-      const operator = '';
       html += `
         <div class="leg-row">
           <div class="leg-line-col">
@@ -268,7 +268,6 @@ function renderItinerary(it, destName) {
                 ? `<span>Kõnni ${formatDuration(leg.duration)} · ${formatDist(leg.distance)}</span>`
                 : `<span>${leg.trip?.routeShortName || m.label} → ${leg.to.name}</span>
                    <span style="opacity:0.7">saabub ${formatTime(leg.endTime)}</span>
-                   ${operator ? `<span style="opacity:0.5">· ${operator}</span>` : ''}
                    ${realtimeBadge(leg)}`
               }
             </div>
@@ -375,7 +374,7 @@ function showRoute(key, itineraries, fromCache, overrideTitle, driveMin, destObj
 
   // Drive time + Waze button
   const driveEl = document.getElementById('route-drive-info');
-  if (dest && (driveMin || true)) {
+  if (dest) {
     const wazeUrl = `waze://?ll=${dest.lat},${dest.lon}&navigate=yes`;
     const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lon}&travelmode=driving`;
     driveEl.innerHTML = `
@@ -396,20 +395,13 @@ function showRoute(key, itineraries, fromCache, overrideTitle, driveMin, destObj
   const container = document.getElementById('route-itineraries');
   container.innerHTML = '';
 
+  const destLabel = overrideTitle || (dest ? dest.name : '');
   itineraries.slice(0, 3).forEach((it, i) => {
     const card = document.createElement('div');
     card.className = 'route-card' + (i > 0 ? ' route-card-alt mt-2' : '');
-    if (i > 0) {
-      const destLabel = overrideTitle || (dest ? dest.name : '');
-    card.innerHTML = `
-        <p class="text-xs text-[#8B8FA8] mb-3 font-medium">Valik ${i + 1}</p>
-        ${renderItinerary(it, destLabel)}`;
-    } else {
-      const dLabel = overrideTitle || (dest ? dest.name : '');
-      card.innerHTML = `
-        <p class="text-xs text-[#3D9CF0] mb-3 font-medium">⚡ KIIREIM</p>
-        ${renderItinerary(it, dLabel)}`;
-    }
+    card.innerHTML = i > 0
+      ? `<p class="text-xs text-[#8B8FA8] mb-3 font-medium">Valik ${i + 1}</p>${renderItinerary(it, destLabel)}`
+      : `<p class="text-xs text-[#3D9CF0] mb-3 font-medium">⚡ KIIREIM</p>${renderItinerary(it, destLabel)}`;
     container.appendChild(card);
   });
 
@@ -685,7 +677,7 @@ async function useGPS(key, btn) {
     document.getElementById(`${key}-search-area`).classList.add('hidden');
     checkBothSelected();
   } catch (e) {
-    btn.textContent = key === 'home' ? '📍 Kasuta praegust asukohta' : '📍 Kasuta praegust asukohta';
+    btn.textContent = '📍 Kasuta praegust asukohta';
     alert('GPS ei tööta. Proovi uuesti.');
   }
 }
@@ -693,12 +685,18 @@ async function useGPS(key, btn) {
 // ─── Quick info (main screen cards) ──────────────────────────────────────────
 let _quickInfoFrom = null;
 let _quickInfoInterval = null;
+let _quickInfoLastTs = 0;
 let _currentRouteKey = null;
 
 async function loadQuickInfo() {
   const home = getPlace('home');
   const work = getPlace('work');
   if (!home || !work) return;
+
+  // Skip if tab is hidden or refreshed too recently (saves battery)
+  if (document.visibilityState === 'hidden') return;
+  if (Date.now() - _quickInfoLastTs < QUICK_INFO_REFRESH_MS) return;
+  _quickInfoLastTs = Date.now();
 
   document.getElementById('work-quick').textContent = '⏳ Laen...';
   document.getElementById('home-quick').textContent = '⏳ Laen...';
@@ -809,7 +807,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Refresh time + quick info every 60 seconds
-  setInterval(() => {
+  _quickInfoInterval = setInterval(() => {
     document.getElementById('main-time').textContent = new Date().toLocaleString('et-EE', {
       weekday: 'long', hour: '2-digit', minute: '2-digit'
     });
