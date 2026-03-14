@@ -137,7 +137,7 @@ async function fetchRoute(from, to) {
           departureDelay
           from { name lat lon }
           to   { name lat lon }
-          trip { routeShortName agency { name } }
+          trip { routeShortName }
         }
       }
     }
@@ -229,7 +229,7 @@ function renderItinerary(it, destName) {
     else if (item.type === 'leg') {
       const leg = item.leg;
       const m = MODES[leg.mode] || MODES.BUS;
-      const operator = leg.trip?.agency?.name || '';
+      const operator = '';
       html += `
         <div class="leg-row">
           <div class="leg-line-col">
