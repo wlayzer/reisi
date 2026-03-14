@@ -287,7 +287,7 @@ function renderItinerary(it, destName) {
             <div class="flex items-center gap-2">
               <span class="text-sm font-bold text-[#8B8FA8] min-w-[44px]">${formatTime(item.time)}</span>
               <span class="text-sm ${item.isLast ? 'font-bold' : ''}">${item.name}</span>
-              ${item.isLast ? '<span class="text-[#2BC48A]">✓</span>' : '<span class="text-xs text-[#8B8FA8]">saabus</span>'}
+              ${item.isLast ? '<span class="text-[#2BC48A]">✓</span>' : `<span class="text-xs text-[#8B8FA8]">${item.time < Date.now() ? 'saabus' : 'saabub'}</span>`}
             </div>
           </div>
         </div>`;
