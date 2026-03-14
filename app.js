@@ -64,8 +64,8 @@ function logPrediction(key, minutes) {
 function getAvgPrediction(key) {
   const h = new Date().getHours();
   const d = new Date().getDay();
-  // Check nearby hour slots too (±1h)
-  const slots = [d + '_' + (h - 1), d + '_' + h, d + '_' + (h + 1)];
+  // Check nearby hour slots too (±1h), clamped to valid 0-23 range
+  const slots = [d + '_' + (h > 0 ? h - 1 : 23), d + '_' + h, d + '_' + (h < 23 ? h + 1 : 0)];
   const all = slots.flatMap(s => JSON.parse(localStorage.getItem(`pred_${key}_${s}`) || '[]'));
   if (all.length < MIN_PREDICTIONS) return null;
   return Math.round(all.reduce((a, b) => a + b, 0) / all.length);
@@ -183,7 +183,7 @@ async function fetchRoute(from, to) {
     throw new Error(`API viga ${res.status}: ${body.slice(0, 200)}`);
   }
   const json = await res.json();
-  if (json.errors) throw new Error(json.errors[0].message);
+  if (json.errors?.length) throw new Error(json.errors[0].message ?? 'API viga');
   return json.data.plan.itineraries;
 }
 
@@ -599,6 +599,7 @@ async function searchPlace(key) {
 
 function selectPlace(key, idx) {
   const btn = document.querySelectorAll(`#${key}-results button`)[idx];
+  if (!btn) return;
   const data = JSON.parse(btn.getAttribute('data-result'));
 
   savePlace(key, data);
@@ -663,6 +664,7 @@ function saveSetup() {
 }
 
 async function useGPS(key, btn) {
+  const originalText = btn.textContent;
   btn.textContent = '⏳ Tuvastame...';
   try {
     const pos = await getLocation();
@@ -679,7 +681,7 @@ async function useGPS(key, btn) {
     document.getElementById(`${key}-search-area`).classList.add('hidden');
     checkBothSelected();
   } catch (e) {
-    btn.textContent = '📍 Kasuta praegust asukohta';
+    btn.textContent = originalText;
     alert('GPS ei tööta. Proovi uuesti.');
   }
 }
@@ -784,10 +786,14 @@ function refreshQuickText() {
 
 // ─── Refresh current route ────────────────────────────────────────────────────
 async function refreshRoute() {
+  if (!_currentRouteKey) {
+    alert('Värskendamine pole saadaval otsingutulemustel. Otsi uuesti.');
+    return;
+  }
   const btn = document.getElementById('route-refresh-btn');
   btn.style.opacity = '0.4';
   btn.style.pointerEvents = 'none';
-  if (_currentRouteKey) await navigate(_currentRouteKey);
+  await navigate(_currentRouteKey);
   btn.style.opacity = '1';
   btn.style.pointerEvents = 'auto';
 }

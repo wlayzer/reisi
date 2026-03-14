@@ -1,4 +1,4 @@
-const CACHE_VERSION = 2; // bump to force cache refresh on deploy
+const CACHE_VERSION = 3; // bump to force cache refresh on deploy
 const CACHE_NAME = `reisi-v${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
@@ -29,8 +29,8 @@ self.addEventListener('activate', event => {
 
 // Fetch: network first, cache fallback
 self.addEventListener('fetch', event => {
-  // Don't intercept API calls (let app handle those with its own cache)
-  if (event.request.url.includes('peatus.ee') || event.request.url.includes('digitransit')) {
+  // Don't intercept API/geocoding calls (let app handle those with its own cache)
+  if (event.request.url.includes('peatus.ee') || event.request.url.includes('nominatim.openstreetmap.org') || event.request.url.includes('project-osrm.org')) {
     return;
   }
 
