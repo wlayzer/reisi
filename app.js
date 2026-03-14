@@ -215,6 +215,7 @@ async function navigate(key) {
     return;
   }
 
+  _currentRouteKey = key;
   cacheRoute(key, itineraries);
   showRoute(key, itineraries, false);
 }
@@ -376,6 +377,83 @@ async function useGPS(key, btn) {
   }
 }
 
+// ─── Quick info (main screen cards) ──────────────────────────────────────────
+let _quickInfoFrom = null;
+let _quickInfoInterval = null;
+let _currentRouteKey = null;
+
+async function loadQuickInfo() {
+  const home = getPlace('home');
+  const work = getPlace('work');
+  if (!home || !work) return;
+
+  document.getElementById('work-quick').textContent = '⏳ Laen...';
+  document.getElementById('home-quick').textContent = '⏳ Laen...';
+
+  try {
+    _quickInfoFrom = await getLocation();
+  } catch (e) {
+    showCachedQuickInfo('work');
+    showCachedQuickInfo('home');
+    return;
+  }
+
+  await Promise.allSettled([
+    updateCardQuickInfo('work', _quickInfoFrom),
+    updateCardQuickInfo('home', _quickInfoFrom)
+  ]);
+}
+
+function showCachedQuickInfo(key) {
+  const cached = getCachedRoute(key);
+  const el = document.getElementById(`${key}-quick`);
+  if (cached && cached.length) {
+    el.textContent = buildQuickText(cached[0]) + ' 📵';
+  } else {
+    el.textContent = 'Puudutage marsruudi nägemiseks';
+  }
+}
+
+function buildQuickText(itinerary) {
+  const firstTransit = itinerary.legs.find(l => l.mode !== 'WALK');
+  const firstWalk = itinerary.legs[0];
+  if (!firstTransit) return `🚶 Kõnd ${formatDuration(itinerary.duration)}`;
+
+  const walkMins = Math.round((firstWalk?.mode === 'WALK' ? firstWalk.duration : 0) / 60);
+  const leaveInMins = Math.round((firstTransit.startTime - Date.now()) / 60000) - walkMins;
+  const routeName = firstTransit.trip?.routeShortName || firstTransit.mode;
+  const arriveTime = formatTime(itinerary.endTime);
+
+  const leaveText = leaveInMins <= 1
+    ? '⚡ Lahku kohe!'
+    : `Lahku ${leaveInMins} min pärast`;
+
+  return `${leaveText} · ${routeName} → kohal ${arriveTime}`;
+}
+
+async function updateCardQuickInfo(key, from) {
+  const dest = getPlace(key);
+  const el = document.getElementById(`${key}-quick`);
+  try {
+    const itineraries = await fetchRoute(from, dest);
+    if (!itineraries || !itineraries.length) { el.textContent = 'Marsruuti ei leitud'; return; }
+    cacheRoute(key, itineraries);
+    el.textContent = buildQuickText(itineraries[0]);
+  } catch (e) {
+    showCachedQuickInfo(key);
+  }
+}
+
+// ─── Refresh current route ────────────────────────────────────────────────────
+async function refreshRoute() {
+  const btn = document.getElementById('route-refresh-btn');
+  btn.style.opacity = '0.4';
+  btn.style.pointerEvents = 'none';
+  if (_currentRouteKey) await navigate(_currentRouteKey);
+  btn.style.opacity = '1';
+  btn.style.pointerEvents = 'auto';
+}
+
 // ─── Main screen update ───────────────────────────────────────────────────────
 function updateMainScreen() {
   const home = getPlace('home');
@@ -388,6 +466,8 @@ function updateMainScreen() {
 
   document.getElementById('home-name').textContent = home ? home.name : 'Seadistamata';
   document.getElementById('work-name').textContent = work ? work.name : 'Seadistamata';
+
+  if (home && work) loadQuickInfo();
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -407,10 +487,13 @@ document.addEventListener('DOMContentLoaded', () => {
     showScreen('screen-main');
   }
 
-  // Refresh time every minute
+  // Refresh time + quick info every 60 seconds
   setInterval(() => {
     document.getElementById('main-time').textContent = new Date().toLocaleString('et-EE', {
       weekday: 'long', hour: '2-digit', minute: '2-digit'
     });
+    if (document.getElementById('screen-main').classList.contains('active')) {
+      updateMainScreen();
+    }
   }, 60000);
 });

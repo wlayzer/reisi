@@ -75,7 +75,7 @@
           <div class="flex-1 min-w-0">
             <p class="text-xs text-[#3D9CF0] font-medium mb-0.5">TÖÖLE</p>
             <p id="work-name" class="font-semibold text-base truncate">Laadimine...</p>
-            <p id="work-hint" class="text-xs text-[#8B8FA8] mt-0.5">Puuduta marsruudi nägemiseks</p>
+            <p id="work-quick" class="text-xs text-[#8B8FA8] mt-1">⏳ Laen...</p>
           </div>
           <span class="text-[#8B8FA8] text-xl">›</span>
         </div>
@@ -89,7 +89,7 @@
           <div class="flex-1 min-w-0">
             <p class="text-xs text-[#2BC48A] font-medium mb-0.5">KOJU</p>
             <p id="home-name" class="font-semibold text-base truncate">Laadimine...</p>
-            <p id="home-hint" class="text-xs text-[#8B8FA8] mt-0.5">Puuduta marsruudi nägemiseks</p>
+            <p id="home-quick" class="text-xs text-[#8B8FA8] mt-1">⏳ Laen...</p>
           </div>
           <span class="text-[#8B8FA8] text-xl">›</span>
         </div>
@@ -109,6 +109,7 @@
       <button onclick="showScreen('screen-main')" class="text-[#3D9CF0] text-lg font-medium">← Tagasi</button>
       <h2 id="route-title" class="text-lg font-bold flex-1"></h2>
       <span id="route-cache-badge" class="hidden text-xs bg-[#252838] text-[#FFA726] px-2 py-1 rounded-full">📵 Vahemälu</span>
+      <button id="route-refresh-btn" onclick="refreshRoute()" class="text-[#3D9CF0] text-xl px-1">↻</button>
     </div>
 
     <!-- Itineraries -->
