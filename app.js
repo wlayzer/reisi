@@ -70,7 +70,10 @@ function getLocation() {
 // ─── API ──────────────────────────────────────────────────────────────────────
 async function fetchRoute(from, to) {
   const now = new Date();
-  const date = now.toISOString().split('T')[0];
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const yyyy = now.getFullYear();
+  const date = `${mm}-${dd}-${yyyy}`; // OTP1 expects MM-DD-YYYY
   const time = now.toTimeString().slice(0, 8);
 
   const query = `{
