@@ -118,7 +118,7 @@ async function fetchRoute(from, to) {
 }
 
 // ─── Render route ─────────────────────────────────────────────────────────────
-function renderItinerary(it) {
+function renderItinerary(it, destName) {
   const legs = it.legs;
   let html = `
     <div class="flex justify-between items-baseline mb-4">
@@ -141,7 +141,7 @@ function renderItinerary(it) {
         <div class="leg-content">
           <div class="flex items-baseline gap-2 mb-1">
             <span class="text-sm font-semibold text-[#8B8FA8]">${formatTime(leg.startTime)}</span>
-            <span class="text-sm font-medium truncate">${leg.from.name}</span>
+            <span class="text-sm font-medium truncate">${leg.from.name === 'Origin' ? '📍 Sinu asukoht' : leg.from.name}</span>
           </div>
           <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium mb-1"
                style="background:${m.color}18; color:${m.color}">
@@ -164,7 +164,7 @@ function renderItinerary(it) {
           <div class="leg-content">
             <div class="flex items-baseline gap-2">
               <span class="text-sm font-semibold text-[#8B8FA8]">${formatTime(leg.endTime)}</span>
-              <span class="text-sm font-bold">${leg.to.name}</span>
+              <span class="text-sm font-bold">${leg.to.name === 'Destination' ? destName : leg.to.name}</span>
               <span class="text-green-400 text-xs">✓</span>
             </div>
           </div>
@@ -233,11 +233,11 @@ function showRoute(key, itineraries, fromCache) {
     if (i > 0) {
       card.innerHTML = `
         <p class="text-xs text-[#8B8FA8] mb-3 font-medium">Valik ${i + 1}</p>
-        ${renderItinerary(it)}`;
+        ${renderItinerary(it, dest.name)}`;
     } else {
       card.innerHTML = `
         <p class="text-xs text-[#3D9CF0] mb-3 font-medium">⚡ KIIREIM</p>
-        ${renderItinerary(it)}`;
+        ${renderItinerary(it, dest.name)}`;
     }
     container.appendChild(card);
   });
