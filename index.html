@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Reisi</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#13141F">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Reisi">
+  <link rel="apple-touch-icon" href="icon.svg">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+    body { background: #13141F; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+    .screen { display: none; min-height: 100dvh; flex-direction: column; }
+    .screen.active { display: flex; }
+
+    /* Route timeline */
+    .leg-row { display: flex; gap: 12px; align-items: stretch; }
+    .leg-line-col { display: flex; flex-direction: column; align-items: center; min-width: 20px; }
+    .leg-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+    .leg-vert-line { flex: 1; width: 2px; min-height: 28px; margin: 4px 0; }
+    .leg-content { flex: 1; padding-bottom: 20px; }
+
+    /* Buttons */
+    .dest-btn { transition: transform 0.1s, opacity 0.1s; }
+    .dest-btn:active { transform: scale(0.97); opacity: 0.85; }
+
+    /* Cards */
+    .route-card { background: #1E2030; border-radius: 16px; padding: 20px; margin-bottom: 16px; }
+    .route-card-alt { background: #1A1C2A; border: 1px solid #252838; }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin 1s linear infinite; }
+
+    /* Safe area */
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 16px); }
+  </style>
+</head>
+<body>
+
+  <!-- SCREEN: Loading -->
+  <div id="screen-loading" class="screen items-center justify-center">
+    <div class="text-center">
+      <div class="spinner text-5xl mb-6">⟳</div>
+      <p id="loading-text" class="text-[#8B8FA8] text-lg">Laen...</p>
+    </div>
+  </div>
+
+  <!-- SCREEN: Main -->
+  <div id="screen-main" class="screen flex-col p-6 safe-bottom">
+    <!-- Header -->
+    <div class="pt-12 pb-8">
+      <p id="main-greeting" class="text-[#8B8FA8] text-sm mb-1">Tere!</p>
+      <h1 class="text-2xl font-bold">Kuhu lähed?</h1>
+      <p id="main-time" class="text-[#8B8FA8] text-sm mt-1"></p>
+    </div>
+
+    <!-- Destination buttons -->
+    <div class="flex flex-col gap-4 flex-1">
+
+      <!-- Work -->
+      <button id="btn-work" onclick="navigate('work')"
+        class="dest-btn w-full bg-[#1E2030] rounded-2xl p-5 text-left border border-[#252838]">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-[#1A2A3A] flex items-center justify-center text-2xl flex-shrink-0">🏢</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-xs text-[#3D9CF0] font-medium mb-0.5">TÖÖLE</p>
+            <p id="work-name" class="font-semibold text-base truncate">Laadimine...</p>
+            <p id="work-hint" class="text-xs text-[#8B8FA8] mt-0.5">Puuduta marsruudi nägemiseks</p>
+          </div>
+          <span class="text-[#8B8FA8] text-xl">›</span>
+        </div>
+      </button>
+
+      <!-- Home -->
+      <button id="btn-home" onclick="navigate('home')"
+        class="dest-btn w-full bg-[#1E2030] rounded-2xl p-5 text-left border border-[#252838]">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-[#1A2E1A] flex items-center justify-center text-2xl flex-shrink-0">🏠</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-xs text-[#2BC48A] font-medium mb-0.5">KOJU</p>
+            <p id="home-name" class="font-semibold text-base truncate">Laadimine...</p>
+            <p id="home-hint" class="text-xs text-[#8B8FA8] mt-0.5">Puuduta marsruudi nägemiseks</p>
+          </div>
+          <span class="text-[#8B8FA8] text-xl">›</span>
+        </div>
+      </button>
+    </div>
+
+    <!-- Settings button -->
+    <button onclick="openSetup()" class="mt-6 w-full py-3 text-[#8B8FA8] text-sm flex items-center justify-center gap-2">
+      ⚙️ Seaded
+    </button>
+  </div>
+
+  <!-- SCREEN: Route -->
+  <div id="screen-route" class="screen flex-col safe-bottom">
+    <!-- Header -->
+    <div class="bg-[#1E2030] px-6 pt-14 pb-5 flex items-center gap-4">
+      <button onclick="showScreen('screen-main')" class="text-[#3D9CF0] text-lg font-medium">← Tagasi</button>
+      <h2 id="route-title" class="text-lg font-bold flex-1"></h2>
+      <span id="route-cache-badge" class="hidden text-xs bg-[#252838] text-[#FFA726] px-2 py-1 rounded-full">📵 Vahemälu</span>
+    </div>
+
+    <!-- Itineraries -->
+    <div id="route-itineraries" class="flex-1 overflow-y-auto px-5 py-4"></div>
+  </div>
+
+  <!-- SCREEN: Setup -->
+  <div id="screen-setup" class="screen flex-col safe-bottom overflow-y-auto">
+    <div class="px-6 pt-14 pb-4 flex items-center gap-4">
+      <button id="setup-back-btn" onclick="showScreen('screen-main')" class="text-[#3D9CF0] text-lg font-medium hidden">← Tagasi</button>
+      <div class="flex-1">
+        <h2 class="text-2xl font-bold mb-0.5">Seadista asukohad</h2>
+        <p class="text-[#8B8FA8] text-xs">Andmed salvestatakse ainult sinu seadmesse.</p>
+      </div>
+    </div>
+
+    <div class="px-6 flex flex-col gap-5 pb-8">
+
+      <!-- Home section -->
+      <div class="bg-[#1E2030] rounded-2xl p-5">
+        <p class="text-[#2BC48A] text-xs font-semibold mb-3">🏠 KODU</p>
+
+        <!-- Selected display -->
+        <div id="home-selected" class="hidden mb-3 flex items-center gap-2 bg-[#13141F] rounded-xl px-4 py-3">
+          <span class="text-[#2BC48A]">✓</span>
+          <span id="home-selected-name" class="text-sm flex-1 truncate"></span>
+          <button onclick="clearPlace('home')" class="text-[#8B8FA8] text-xs">Muuda</button>
+        </div>
+
+        <div id="home-search-area" class="flex flex-col gap-2">
+          <div class="flex gap-2">
+            <input id="home-search" type="text" placeholder="Otsi aadressi..."
+              onkeydown="if(event.key==='Enter') searchPlace('home')"
+              class="flex-1 bg-[#13141F] border border-[#252838] rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-[#2BC48A]">
+            <button onclick="searchPlace('home')"
+              class="px-4 py-3 bg-[#2BC48A] rounded-xl text-white text-sm font-semibold">Otsi</button>
+          </div>
+          <button onclick="useGPS('home', this)"
+            class="w-full py-2.5 bg-[#13141F] border border-[#252838] rounded-xl text-[#2BC48A] text-sm font-medium">
+            📍 Kasuta praegust asukohta
+          </button>
+          <!-- Results -->
+          <div id="home-results" class="flex flex-col gap-1"></div>
+        </div>
+      </div>
+
+      <!-- Work section -->
+      <div class="bg-[#1E2030] rounded-2xl p-5">
+        <p class="text-[#3D9CF0] text-xs font-semibold mb-3">🏢 TÖÖ</p>
+
+        <!-- Selected display -->
+        <div id="work-selected" class="hidden mb-3 flex items-center gap-2 bg-[#13141F] rounded-xl px-4 py-3">
+          <span class="text-[#3D9CF0]">✓</span>
+          <span id="work-selected-name" class="text-sm flex-1 truncate"></span>
+          <button onclick="clearPlace('work')" class="text-[#8B8FA8] text-xs">Muuda</button>
+        </div>
+
+        <div id="work-search-area" class="flex flex-col gap-2">
+          <div class="flex gap-2">
+            <input id="work-search" type="text" placeholder="Otsi aadressi..."
+              onkeydown="if(event.key==='Enter') searchPlace('work')"
+              class="flex-1 bg-[#13141F] border border-[#252838] rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-[#3D9CF0]">
+            <button onclick="searchPlace('work')"
+              class="px-4 py-3 bg-[#3D9CF0] rounded-xl text-white text-sm font-semibold">Otsi</button>
+          </div>
+          <button onclick="useGPS('work', this)"
+            class="w-full py-2.5 bg-[#13141F] border border-[#252838] rounded-xl text-[#3D9CF0] text-sm font-medium">
+            📍 Kasuta praegust asukohta
+          </button>
+          <!-- Results -->
+          <div id="work-results" class="flex flex-col gap-1"></div>
+        </div>
+      </div>
+
+      <!-- Save button -->
+      <button id="setup-save-btn" onclick="saveSetup()" class="hidden w-full py-4 bg-[#3D9CF0] rounded-2xl font-bold text-white text-base">
+        Salvesta
+      </button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

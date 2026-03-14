@@ -1,0 +1,19 @@
+{
+  "name": "Reisi",
+  "short_name": "Reisi",
+  "description": "Harjumaa ühistranspordi teejuht",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#13141F",
+  "theme_color": "#13141F",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
