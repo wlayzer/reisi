@@ -626,6 +626,25 @@ function checkBothSelected() {
   document.getElementById('setup-save-btn').classList.toggle('hidden', !home || !work);
 }
 
+// ─── Data management ──────────────────────────────────────────────────────────
+function clearCache() {
+  ['home', 'work'].forEach(key => localStorage.removeItem('route_cache_' + key));
+  _quickInfoData.home = null;
+  _quickInfoData.work = null;
+  _quickInfoLastTs = 0;
+  alert('Marsruudi vahemälu kustutatud.');
+}
+
+function clearAllData() {
+  if (!confirm('Kustutatakse kõik andmed, sh kodu ja töö asukohad ning otsinguajalugu. Jätka?')) return;
+  localStorage.clear();
+  _quickInfoData.home = null;
+  _quickInfoData.work = null;
+  _quickInfoLastTs = 0;
+  _quickInfoFrom = null;
+  openSetup();
+}
+
 // ─── Setup ────────────────────────────────────────────────────────────────────
 function openSetup() {
   const home = getPlace('home');

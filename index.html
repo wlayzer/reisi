@@ -205,6 +205,19 @@
       <button id="setup-save-btn" onclick="saveSetup()" class="hidden w-full py-4 bg-[#3D9CF0] rounded-2xl font-bold text-white text-base">
         Salvesta
       </button>
+
+      <!-- Data management -->
+      <div class="border-t border-[#252838] pt-5 flex flex-col gap-2">
+        <p class="text-[#8B8FA8] text-xs font-medium mb-1">ANDMED</p>
+        <button onclick="clearCache()"
+          class="w-full py-3 bg-[#1E2030] border border-[#252838] rounded-xl text-[#FFA726] text-sm font-medium">
+          Kustuta marsruudi vahemälu
+        </button>
+        <button onclick="clearAllData()"
+          class="w-full py-3 bg-[#1E2030] border border-[#252838] rounded-xl text-[#EF5350] text-sm font-medium">
+          Kustuta kõik andmed
+        </button>
+      </div>
     </div>
   </div>
 
