@@ -80,13 +80,6 @@ async function fetchRoute(from, to) {
       date: "${date}"
       time: "${time}"
       numItineraries: 3
-      transportModes: [
-        { mode: WALK }
-        { mode: RAIL }
-        { mode: BUS }
-        { mode: TRAM }
-        { mode: FERRY }
-      ]
     ) {
       itineraries {
         duration
@@ -100,7 +93,7 @@ async function fetchRoute(from, to) {
           distance
           from { name lat lon }
           to   { name lat lon }
-          trip { routeShortName routeLongName }
+          trip { routeShortName }
         }
       }
     }
@@ -112,7 +105,10 @@ async function fetchRoute(from, to) {
     body: JSON.stringify({ query })
   });
 
-  if (!res.ok) throw new Error(`API viga ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`API viga ${res.status}: ${body.slice(0, 200)}`);
+  }
   const json = await res.json();
   if (json.errors) throw new Error(json.errors[0].message);
   return json.data.plan.itineraries;
