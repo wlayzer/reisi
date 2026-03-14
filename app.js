@@ -71,10 +71,23 @@ function getAvgPrediction(key) {
   return Math.round(all.reduce((a, b) => a + b, 0) / all.length);
 }
 
+// ─── Wake lock ────────────────────────────────────────────────────────────────
+let _wakeLock = null;
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try { _wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+function releaseWakeLock() {
+  _wakeLock?.release();
+  _wakeLock = null;
+}
+
 // ─── Screens ──────────────────────────────────────────────────────────────────
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  if (id === 'screen-route') requestWakeLock();
+  else releaseWakeLock();
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -94,6 +107,17 @@ function greeting() {
   if (h < 12) return 'Tere hommikust!';
   if (h < 18) return 'Tere päevast!';
   return 'Tere õhtust!';
+}
+function isNextDay(ms) {
+  const n = new Date(), d = new Date(ms);
+  return d.getDate() !== n.getDate() || d.getMonth() !== n.getMonth() || d.getFullYear() !== n.getFullYear();
+}
+function walkMapsUrl(leg) {
+  const o = `${leg.from.lat},${leg.from.lon}`;
+  const d = `${leg.to.lat},${leg.to.lon}`;
+  return /iPhone|iPad|iPod/.test(navigator.userAgent)
+    ? `maps://?saddr=${o}&daddr=${d}&dirflg=w`
+    : `https://www.google.com/maps/dir/?api=1&origin=${o}&destination=${d}&travelmode=walking`;
 }
 
 // ─── Fetch with timeout ───────────────────────────────────────────────────────
@@ -225,11 +249,12 @@ function renderItinerary(it, destName) {
   });
 
   // Header
+  const nextDay = isNextDay(it.endTime);
   let html = `
     <div class="flex justify-between items-start mb-4">
       <span class="text-2xl font-bold">${formatDuration(it.duration)}</span>
       <div class="text-right">
-        <div class="text-sm">Kohal kell <span class="font-bold">${formatTime(it.endTime)}</span></div>
+        <div class="text-sm">Kohal kell <span class="font-bold">${formatTime(it.endTime)}</span>${nextDay ? ' <span class="text-[#FFA726] text-xs font-normal">homme</span>' : ''}</div>
         <div class="text-[#8B8FA8] text-xs mt-0.5">🚶 ${totalWalkMins} min · ${formatDist(totalWalkDist)}</div>
       </div>
     </div><div>`;
@@ -267,7 +292,8 @@ function renderItinerary(it, destName) {
             <div class="inline-flex flex-wrap items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium mb-2" style="background:${m.color}15; color:${m.color}">
               <span>${m.icon}</span>
               ${leg.mode === 'WALK'
-                ? `<span>Kõnni ${formatDuration(leg.duration)} · ${formatDist(leg.distance)}</span>`
+                ? `<span>Kõnni ${formatDuration(leg.duration)} · ${formatDist(leg.distance)}</span>
+                   <a href="${walkMapsUrl(leg)}" target="_blank" style="color:#8B8FA8;text-decoration:none;font-size:14px" onclick="event.stopPropagation()">🗺</a>`
                 : `<span>${leg.trip?.routeShortName || m.label} → ${leg.to.name}</span>
                    <span style="opacity:0.7">saabub ${formatTime(leg.endTime)}</span>
                    ${realtimeBadge(leg)}`
@@ -370,7 +396,9 @@ function showRoute(key, itineraries, fromCache, overrideTitle, driveMin, destObj
   const dest = destObj || (key ? getPlace(key) : null);
   const title = overrideTitle
     ? '📍 ' + overrideTitle
-    : key === 'work' ? '🏢 ' + dest.name : '🏠 ' + dest.name;
+    : key === 'work' ? '🏢 ' + dest.name
+    : key === 'fav'  ? '⭐ ' + dest.name
+    : '🏠 ' + dest.name;
   document.getElementById('route-title').textContent = title;
 
   // Drive time + Waze button
@@ -391,7 +419,15 @@ function showRoute(key, itineraries, fromCache, overrideTitle, driveMin, destObj
   } else {
     driveEl.classList.add('hidden');
   }
-  document.getElementById('route-cache-badge').classList.toggle('hidden', !fromCache);
+  const cacheBadge = document.getElementById('route-cache-badge');
+  if (!fromCache) {
+    cacheBadge.classList.add('hidden');
+  } else {
+    const stale = itineraries[0]?.endTime < Date.now();
+    cacheBadge.textContent = stale ? '⚠️ Aegunud marsruut' : '📵 Vahemälu';
+    cacheBadge.style.color   = stale ? '#EF5350' : '#FFA726';
+    cacheBadge.classList.remove('hidden');
+  }
 
   const container = document.getElementById('route-itineraries');
   container.innerHTML = '';
@@ -696,13 +732,13 @@ function toggleDataView() {
 function openSetup() {
   const home = getPlace('home');
   const work = getPlace('work');
-  const fromMain = !!(home || work);
+  const fromMain = !!(home || work || getPlace('fav'));
 
   // Show back button only if already configured
   document.getElementById('setup-back-btn').classList.toggle('hidden', !fromMain);
 
   // Show existing selections if any
-  for (const key of ['home', 'work']) {
+  for (const key of ['home', 'work', 'fav']) {
     const place = getPlace(key);
     if (place) {
       document.getElementById(`${key}-selected-name`).textContent = place.name;
@@ -757,7 +793,7 @@ let _quickInfoFrom = null;
 let _quickInfoInterval = null;
 let _quickInfoLastTs = 0;
 let _currentRouteKey = null;
-const _quickInfoData = { home: null, work: null }; // last fetched itinerary per card
+const _quickInfoData = { home: null, work: null, fav: null }; // last fetched itinerary per card
 
 async function loadQuickInfo() {
   const home = getPlace('home');
@@ -769,20 +805,24 @@ async function loadQuickInfo() {
   if (Date.now() - _quickInfoLastTs < QUICK_INFO_REFRESH_MS) return;
   _quickInfoLastTs = Date.now();
 
+  const fav = getPlace('fav');
   document.getElementById('work-quick').textContent = '⏳ Laen...';
   document.getElementById('home-quick').textContent = '⏳ Laen...';
+  if (fav) document.getElementById('fav-quick').textContent = '⏳ Laen...';
 
   try {
     _quickInfoFrom = await getLocation();
   } catch (e) {
     showCachedQuickInfo('work');
     showCachedQuickInfo('home');
+    if (fav) showCachedQuickInfo('fav');
     return;
   }
 
   await Promise.allSettled([
     updateCardQuickInfo('work', _quickInfoFrom),
-    updateCardQuickInfo('home', _quickInfoFrom)
+    updateCardQuickInfo('home', _quickInfoFrom),
+    ...(fav ? [updateCardQuickInfo('fav', _quickInfoFrom)] : [])
   ]);
 }
 
@@ -841,7 +881,7 @@ async function updateCardQuickInfo(key, from) {
 
 // ─── Refresh quick info text from cached data (runs every 60 s, no API call) ──
 function refreshQuickText() {
-  for (const key of ['home', 'work']) {
+  for (const key of ['home', 'work', 'fav']) {
     if (!_quickInfoData[key]) continue;
     const el = document.getElementById(`${key}-quick`);
     const avg = getAvgPrediction(key);
@@ -874,8 +914,11 @@ function updateMainScreen() {
     weekday: 'long', hour: '2-digit', minute: '2-digit'
   });
 
+  const fav = getPlace('fav');
   document.getElementById('home-name').textContent = home ? home.name : 'Seadistamata';
   document.getElementById('work-name').textContent = work ? work.name : 'Seadistamata';
+  document.getElementById('fav-name').textContent  = fav  ? fav.name  : 'Seadista...';
+  document.getElementById('btn-fav').classList.toggle('opacity-50', !fav);
 
   if (home && work) loadQuickInfo();
 }

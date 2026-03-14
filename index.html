@@ -94,6 +94,20 @@
           <span class="text-[#8B8FA8] text-xl">›</span>
         </div>
       </button>
+
+      <!-- Favourite -->
+      <button id="btn-fav" onclick="navigate('fav')"
+        class="dest-btn w-full bg-[#1E2030] rounded-2xl p-5 text-left border border-[#252838]">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-[#2A1A2E] flex items-center justify-center text-2xl flex-shrink-0">⭐</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-xs text-[#AB47BC] font-medium mb-0.5">LEMMIK</p>
+            <p id="fav-name" class="font-semibold text-base truncate">Seadista...</p>
+            <p id="fav-quick" class="text-xs text-[#8B8FA8] mt-1"></p>
+          </div>
+          <span class="text-[#8B8FA8] text-xl">›</span>
+        </div>
+      </button>
     </div>
 
     <!-- Ad-hoc search -->
@@ -198,6 +212,32 @@
           </button>
           <!-- Results -->
           <div id="work-results" class="flex flex-col gap-1"></div>
+        </div>
+      </div>
+
+      <!-- Favourite section -->
+      <div class="bg-[#1E2030] rounded-2xl p-5">
+        <p class="text-[#AB47BC] text-xs font-semibold mb-3">⭐ LEMMIK <span class="text-[#8B8FA8] font-normal">(valikuline)</span></p>
+
+        <div id="fav-selected" class="hidden mb-3 flex items-center gap-2 bg-[#13141F] rounded-xl px-4 py-3">
+          <span class="text-[#AB47BC]">✓</span>
+          <span id="fav-selected-name" class="text-sm flex-1 truncate"></span>
+          <button onclick="clearPlace('fav')" class="text-[#8B8FA8] text-xs">Muuda</button>
+        </div>
+
+        <div id="fav-search-area" class="flex flex-col gap-2">
+          <div class="flex gap-2">
+            <input id="fav-search" type="text" placeholder="Otsi aadressi..."
+              onkeydown="if(event.key==='Enter') searchPlace('fav')"
+              class="flex-1 bg-[#13141F] border border-[#252838] rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-[#AB47BC]">
+            <button onclick="searchPlace('fav')"
+              class="px-4 py-3 bg-[#AB47BC] rounded-xl text-white text-sm font-semibold">Otsi</button>
+          </div>
+          <button onclick="useGPS('fav', this)"
+            class="w-full py-2.5 bg-[#13141F] border border-[#252838] rounded-xl text-[#AB47BC] text-sm font-medium">
+            📍 Kasuta praegust asukohta
+          </button>
+          <div id="fav-results" class="flex flex-col gap-1"></div>
         </div>
       </div>
 
