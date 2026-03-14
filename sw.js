@@ -1,4 +1,5 @@
-const CACHE_NAME = 'reisi-v1';
+const CACHE_VERSION = 2; // bump to force cache refresh on deploy
+const CACHE_NAME = `reisi-v${CACHE_VERSION}`;
 const APP_SHELL = [
   './',
   './index.html',

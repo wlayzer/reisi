@@ -4,6 +4,16 @@ const GEOCODE_URL = 'https://nominatim.openstreetmap.org/search';
 const PELIAS_URL  = 'https://api.peatus.ee/geocoding/v1/autocomplete';
 const OSRM_URL    = 'https://router.project-osrm.org/route/v1/driving';
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+const CACHE_TTL_MS           = 2 * 60 * 60 * 1000; // 2 hours
+const AT_DESTINATION_METERS  = 200;                  // considered "at destination"
+const MIN_PREDICTIONS        = 3;                    // min data points for avg
+const MAX_PREDICTION_HISTORY = 10;                   // per-slot cap
+const SEARCH_DEBOUNCE_MS     = 350;
+const QUICK_INFO_INTERVAL_MS = 60 * 1000;            // 1 minute
+const GPS_TIMEOUT_MS         = 12000;
+const API_TIMEOUT_MS         = 10000;                // abort hung API calls after 10 s
+
 // Mode display config
 const MODES = {
   WALK:   { icon: '🚶', label: 'Kõnni',  color: '#8B8FA8', line: '#8B8FA8' },
@@ -28,14 +38,14 @@ function getCachedRoute(key) {
   const item = JSON.parse(localStorage.getItem('route_cache_' + key) || 'null');
   if (!item) return null;
   // Cache valid for 2 hours
-  if (Date.now() - item.ts > 7200000) return null;
+  if (Date.now() - item.ts > CACHE_TTL_MS) return null;
   return item.data;
 }
 
 // ─── Drive time ───────────────────────────────────────────────────────────────
 async function fetchDriveTime(from, to) {
   const url = `${OSRM_URL}/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   const json = await res.json();
   if (json.code !== 'Ok') return null;
   return Math.round(json.routes[0].duration / 60); // minutes
@@ -46,7 +56,7 @@ function logPrediction(key, minutes) {
   const slot = `pred_${key}_${new Date().getDay()}_${new Date().getHours()}`;
   const history = JSON.parse(localStorage.getItem(slot) || '[]');
   history.push(minutes);
-  localStorage.setItem(slot, JSON.stringify(history.slice(-10)));
+  localStorage.setItem(slot, JSON.stringify(history.slice(-MAX_PREDICTION_HISTORY)));
 }
 function getAvgPrediction(key) {
   const h = new Date().getHours();
@@ -54,7 +64,7 @@ function getAvgPrediction(key) {
   // Check nearby hour slots too (±1h)
   const slots = [d + '_' + (h - 1), d + '_' + h, d + '_' + (h + 1)];
   const all = slots.flatMap(s => JSON.parse(localStorage.getItem(`pred_${key}_${s}`) || '[]'));
-  if (all.length < 3) return null;
+  if (all.length < MIN_PREDICTIONS) return null;
   return Math.round(all.reduce((a, b) => a + b, 0) / all.length);
 }
 
@@ -83,6 +93,22 @@ function greeting() {
   return 'Tere õhtust!';
 }
 
+// ─── Fetch with timeout ───────────────────────────────────────────────────────
+function fetchWithTimeout(url, options = {}, ms = API_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(id));
+}
+
+// ─── XSS escape ───────────────────────────────────────────────────────────────
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 // ─── Distance helper ──────────────────────────────────────────────────────────
 function getDistanceMeters(a, b) {
   const R = 6371000;
@@ -101,7 +127,7 @@ function getLocation() {
     navigator.geolocation.getCurrentPosition(
       p => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
       e => reject(e),
-      { enableHighAccuracy: true, timeout: 12000 }
+      { enableHighAccuracy: true, timeout: GPS_TIMEOUT_MS }
     );
   });
 }
@@ -143,7 +169,7 @@ async function fetchRoute(from, to) {
     }
   }`;
 
-  const res = await fetch(API_URL, {
+  const res = await fetchWithTimeout(API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query })
@@ -286,52 +312,58 @@ function renderItinerary(it, destName) {
 
 // ─── Navigate ─────────────────────────────────────────────────────────────────
 async function navigate(key) {
+  if (_navigating) return;
   const dest = getPlace(key);
   if (!dest) { openSetup(); return; }
 
-  showScreen('screen-loading');
-  document.getElementById('loading-text').textContent = 'Tuvastame asukohta...';
-
-  let from;
+  _navigating = true;
   try {
-    from = await getLocation();
-  } catch (e) {
-    const cached = getCachedRoute(key);
-    if (cached) { showRoute(key, cached, true); return; }
-    alert('GPS ei tööta. Kontrolli rakenduse asukoaluba (Settings → Safari → Location).');
-    showScreen('screen-main');
-    return;
+    showScreen('screen-loading');
+    document.getElementById('loading-text').textContent = 'Tuvastame asukohta...';
+
+    let from;
+    try {
+      from = await getLocation();
+    } catch (e) {
+      const cached = getCachedRoute(key);
+      if (cached) { showRoute(key, cached, true); return; }
+      alert('GPS ei tööta. Kontrolli rakenduse asukoaluba (Settings → Safari → Location).');
+      showScreen('screen-main');
+      return;
+    }
+
+    document.getElementById('loading-text').textContent = 'Otsin parimat marsruuti...';
+
+    let itineraries, driveMin;
+    try {
+      [itineraries, driveMin] = await Promise.all([
+        fetchRoute(from, dest),
+        fetchDriveTime(from, dest).catch(() => null)
+      ]);
+    } catch (e) {
+      console.error('API error:', e);
+      const cached = getCachedRoute(key);
+      if (cached) { showRoute(key, cached, true, null, null); return; }
+      alert(`Marsruudi otsimine ebaõnnestus:\n${e.message}\n\nKontrolli internetiühendust.`);
+      showScreen('screen-main');
+      return;
+    }
+
+    if (!itineraries || itineraries.length === 0) {
+      alert('Marsruuti ei leitud. Proovi hiljem uuesti.');
+      showScreen('screen-main');
+      return;
+    }
+
+    // Log prediction for learning
+    if (key) logPrediction(key, Math.round(itineraries[0].duration / 60));
+
+    _currentRouteKey = key;
+    cacheRoute(key, itineraries);
+    showRoute(key, itineraries, false, null, driveMin, dest);
+  } finally {
+    _navigating = false;
   }
-
-  document.getElementById('loading-text').textContent = 'Otsin parimat marsruuti...';
-
-  let itineraries, driveMin;
-  try {
-    [itineraries, driveMin] = await Promise.all([
-      fetchRoute(from, dest),
-      fetchDriveTime(from, dest).catch(() => null)
-    ]);
-  } catch (e) {
-    console.error('API error:', e);
-    const cached = getCachedRoute(key);
-    if (cached) { showRoute(key, cached, true, null, null); return; }
-    alert(`Marsruudi otsimine ebaõnnestus:\n${e.message}\n\nKontrolli internetiühendust.`);
-    showScreen('screen-main');
-    return;
-  }
-
-  if (!itineraries || itineraries.length === 0) {
-    alert('Marsruuti ei leitud. Proovi hiljem uuesti.');
-    showScreen('screen-main');
-    return;
-  }
-
-  // Log prediction for learning
-  if (key) logPrediction(key, Math.round(itineraries[0].duration / 60));
-
-  _currentRouteKey = key;
-  cacheRoute(key, itineraries);
-  showRoute(key, itineraries, false, null, driveMin, dest);
 }
 
 function showRoute(key, itineraries, fromCache, overrideTitle, driveMin, destObj) {
@@ -396,6 +428,7 @@ function addToHistory(place) {
 
 // ─── Main screen search ───────────────────────────────────────────────────────
 let _searchTimer = null;
+let _navigating  = false;
 
 function onMainSearchFocus() {
   const input = document.getElementById('main-search-input');
@@ -406,7 +439,7 @@ function onMainSearch(value) {
   document.getElementById('main-search-clear').classList.toggle('hidden', !value);
   clearTimeout(_searchTimer);
   if (!value.trim()) { showSearchHistory(); return; }
-  _searchTimer = setTimeout(() => runMainSearch(value), 350);
+  _searchTimer = setTimeout(() => runMainSearch(value), SEARCH_DEBOUNCE_MS);
 }
 
 function clearMainSearch() {
@@ -426,7 +459,7 @@ function showSearchHistory() {
       <button onclick="navigateTo(${i}, 'history')"
         class="w-full text-left px-4 py-3 text-sm flex items-center gap-3 border-t border-[#252838] first:border-0 active:bg-[#252838]">
         <span class="text-[#8B8FA8]">🕐</span>
-        <span class="truncate">${p.name}</span>
+        <span class="truncate">${escHtml(p.name)}</span>
       </button>`).join('')}`;
   el.classList.remove('hidden');
 }
@@ -440,7 +473,7 @@ async function geocodeQuery(query) {
       params.set('focus.point.lat', _quickInfoFrom.lat);
       params.set('focus.point.lon', _quickInfoFrom.lon);
     }
-    const res = await fetch(`${PELIAS_URL}?${params}`);
+    const res = await fetchWithTimeout(`${PELIAS_URL}?${params}`);
     const json = await res.json();
     if (json.features && json.features.length) {
       return json.features.map(f => ({
@@ -453,7 +486,7 @@ async function geocodeQuery(query) {
 
   // Fallback: Nominatim
   const params = new URLSearchParams({ q: query, format: 'json', countrycodes: 'ee', limit: 5 });
-  const res = await fetch(`${GEOCODE_URL}?${params}`, {
+  const res = await fetchWithTimeout(`${GEOCODE_URL}?${params}`, {
     headers: { 'Accept-Language': 'et', 'User-Agent': 'ReisiApp/1.0' }
   });
   const results = await res.json();
@@ -480,7 +513,7 @@ async function runMainSearch(query) {
       <button onclick="navigateTo(${i}, 'search')"
         class="w-full text-left px-4 py-3 text-sm flex items-center gap-3 border-t border-[#252838] first:border-0 active:bg-[#252838]">
         <span class="text-[#8B8FA8]">📍</span>
-        <span class="truncate">${r.name}</span>
+        <span class="truncate">${escHtml(r.name)}</span>
       </button>`).join('');
   } catch (e) {
     el.innerHTML = '<p class="text-[#8B8FA8] text-xs px-4 py-3">Viga otsingus.</p>';
@@ -488,52 +521,58 @@ async function runMainSearch(query) {
 }
 
 async function navigateTo(idx, source) {
+  if (_navigating) return;
   const place = source === 'history' ? getHistory()[idx] : window._searchResults[idx];
   if (!place) return;
 
-  // Save to history
-  addToHistory(place);
-
-  // Close search UI
-  document.getElementById('main-search-input').value = '';
-  document.getElementById('main-search-clear').classList.add('hidden');
-  document.getElementById('main-search-results').classList.add('hidden');
-
-  // Navigate
-  showScreen('screen-loading');
-  document.getElementById('loading-text').textContent = 'Tuvastame asukohta...';
-
-  let from;
+  _navigating = true;
   try {
-    from = await getLocation();
-  } catch (e) {
-    alert('GPS ei tööta. Kontrolli asukoaluba.');
-    showScreen('screen-main');
-    return;
+    // Save to history
+    addToHistory(place);
+
+    // Close search UI
+    document.getElementById('main-search-input').value = '';
+    document.getElementById('main-search-clear').classList.add('hidden');
+    document.getElementById('main-search-results').classList.add('hidden');
+
+    // Navigate
+    showScreen('screen-loading');
+    document.getElementById('loading-text').textContent = 'Tuvastame asukohta...';
+
+    let from;
+    try {
+      from = await getLocation();
+    } catch (e) {
+      alert('GPS ei tööta. Kontrolli asukoaluba.');
+      showScreen('screen-main');
+      return;
+    }
+
+    document.getElementById('loading-text').textContent = 'Otsin marsruuti...';
+
+    let itineraries, driveMin;
+    try {
+      [itineraries, driveMin] = await Promise.all([
+        fetchRoute(from, place),
+        fetchDriveTime(from, place).catch(() => null)
+      ]);
+    } catch (e) {
+      alert(`Marsruudi otsimine ebaõnnestus:\n${e.message}`);
+      showScreen('screen-main');
+      return;
+    }
+
+    if (!itineraries || !itineraries.length) {
+      alert('Marsruuti ei leitud.');
+      showScreen('screen-main');
+      return;
+    }
+
+    _currentRouteKey = null;
+    showRoute(null, itineraries, false, place.name, driveMin, place);
+  } finally {
+    _navigating = false;
   }
-
-  document.getElementById('loading-text').textContent = 'Otsin marsruuti...';
-
-  let itineraries, driveMin;
-  try {
-    [itineraries, driveMin] = await Promise.all([
-      fetchRoute(from, place),
-      fetchDriveTime(from, place).catch(() => null)
-    ]);
-  } catch (e) {
-    alert(`Marsruudi otsimine ebaõnnestus:\n${e.message}`);
-    showScreen('screen-main');
-    return;
-  }
-
-  if (!itineraries || !itineraries.length) {
-    alert('Marsruuti ei leitud.');
-    showScreen('screen-main');
-    return;
-  }
-
-  _currentRouteKey = null;
-  showRoute(null, itineraries, false, place.name, driveMin, place);
 }
 
 // ─── Geocoding ────────────────────────────────────────────────────────────────
@@ -556,7 +595,7 @@ async function searchPlace(key) {
     resultsEl.innerHTML = results.map((r, i) => `
       <button onclick="selectPlace('${key}', ${i})" data-result='${JSON.stringify(r).replace(/'/g, '&#39;')}'
         class="w-full text-left bg-[#13141F] border border-[#252838] rounded-xl px-4 py-3 text-sm hover:border-[#3D9CF0] transition-colors">
-        <span class="block font-medium truncate">${r.name}</span>
+        <span class="block font-medium truncate">${escHtml(r.name)}</span>
       </button>`).join('');
 
   } catch (e) {
@@ -711,7 +750,7 @@ async function updateCardQuickInfo(key, from) {
 
   // Check if already at destination (~200m radius)
   const dist = getDistanceMeters(from, dest);
-  if (dist < 200) { el.textContent = '✓ Oled juba siin'; return; }
+  if (dist < AT_DESTINATION_METERS) { el.textContent = '✓ Oled juba siin'; return; }
 
   try {
     const itineraries = await fetchRoute(from, dest);
@@ -777,5 +816,5 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.getElementById('screen-main').classList.contains('active')) {
       updateMainScreen();
     }
-  }, 60000);
+  }, QUICK_INFO_INTERVAL_MS);
 });
