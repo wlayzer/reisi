@@ -56,6 +56,17 @@ function greeting() {
   return 'Tere õhtust!';
 }
 
+// ─── Distance helper ──────────────────────────────────────────────────────────
+function getDistanceMeters(a, b) {
+  const R = 6371000;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLon = (b.lon - a.lon) * Math.PI / 180;
+  const x = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
 // ─── GPS ──────────────────────────────────────────────────────────────────────
 function getLocation() {
   return new Promise((resolve, reject) => {
@@ -586,6 +597,11 @@ function buildQuickText(itinerary) {
 async function updateCardQuickInfo(key, from) {
   const dest = getPlace(key);
   const el = document.getElementById(`${key}-quick`);
+
+  // Check if already at destination (~200m radius)
+  const dist = getDistanceMeters(from, dest);
+  if (dist < 200) { el.textContent = '✓ Oled juba siin'; return; }
+
   try {
     const itineraries = await fetchRoute(from, dest);
     if (!itineraries || !itineraries.length) { el.textContent = 'Marsruuti ei leitud'; return; }
