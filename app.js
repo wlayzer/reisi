@@ -94,6 +94,8 @@ async function fetchRoute(from, to) {
           endTime
           duration
           distance
+          realTime
+          departureDelay
           from { name lat lon }
           to   { name lat lon }
           trip { routeShortName }
@@ -115,6 +117,16 @@ async function fetchRoute(from, to) {
   const json = await res.json();
   if (json.errors) throw new Error(json.errors[0].message);
   return json.data.plan.itineraries;
+}
+
+// ─── Real-time badge ──────────────────────────────────────────────────────────
+function realtimeBadge(leg) {
+  if (!leg.realTime) return '<span style="opacity:0.4;font-size:10px">sõiduplaani järgi</span>';
+  const delaySec = leg.departureDelay || 0;
+  const delayMin = Math.round(delaySec / 60);
+  if (delayMin <= 1)  return '<span style="color:#2BC48A;font-size:11px">● õigeaegselt</span>';
+  if (delayMin <= 5)  return `<span style="color:#FFA726;font-size:11px">● +${delayMin} min</span>`;
+  return `<span style="color:#EF5350;font-size:11px">● +${delayMin} min hilja</span>`;
 }
 
 // ─── Render route ─────────────────────────────────────────────────────────────
@@ -150,6 +162,7 @@ function renderItinerary(it, destName) {
               ? `Kõnni ${formatDuration(leg.duration)} · ${formatDist(leg.distance)}`
               : `${leg.trip?.routeShortName || m.label}  →  ${leg.to.name}`
             }</span>
+            ${leg.mode !== 'WALK' ? realtimeBadge(leg) : ''}
           </div>
         </div>
       </div>`;
