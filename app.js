@@ -645,6 +645,53 @@ function clearAllData() {
   openSetup();
 }
 
+function toggleDataView() {
+  const el = document.getElementById('local-data-view');
+  if (!el.classList.contains('hidden')) { el.classList.add('hidden'); return; }
+
+  const home = getPlace('home');
+  const work = getPlace('work');
+  const history = getHistory();
+
+  // Cache ages
+  function cacheStatus(key) {
+    const item = JSON.parse(localStorage.getItem('route_cache_' + key) || 'null');
+    if (!item) return 'Puudub';
+    const ageMin = Math.round((Date.now() - item.ts) / 60000);
+    return ageMin < 60 ? `${ageMin} min tagasi` : `${Math.floor(ageMin / 60)} t ${ageMin % 60} min tagasi`;
+  }
+
+  // Prediction counts
+  function predCount(key) {
+    let total = 0;
+    for (let d = 0; d < 7; d++) {
+      for (let h = 0; h < 24; h++) {
+        const slot = JSON.parse(localStorage.getItem(`pred_${key}_${d}_${h}`) || '[]');
+        total += slot.length;
+      }
+    }
+    return total;
+  }
+
+  const rows = [
+    { label: 'Kodu', value: home ? `${home.name} (${home.lat.toFixed(4)}, ${home.lon.toFixed(4)})` : '—' },
+    { label: 'Töö',  value: work ? `${work.name} (${work.lat.toFixed(4)}, ${work.lon.toFixed(4)})` : '—' },
+    { label: 'Otsinguajalugu', value: history.length ? history.map(p => p.name).join(', ') : '—' },
+    { label: 'Vahemälu (kodu)', value: cacheStatus('home') },
+    { label: 'Vahemälu (töö)',  value: cacheStatus('work') },
+    { label: 'Ennustused (kodu)', value: `${predCount('home')} kirjet` },
+    { label: 'Ennustused (töö)',  value: `${predCount('work')} kirjet` },
+  ];
+
+  el.innerHTML = rows.map(r => `
+    <div class="flex flex-col gap-0.5 py-2 border-b border-[#252838] last:border-0">
+      <span class="text-[#8B8FA8] text-xs">${r.label}</span>
+      <span class="text-white text-xs break-all">${r.value}</span>
+    </div>`).join('');
+
+  el.classList.remove('hidden');
+}
+
 // ─── Setup ────────────────────────────────────────────────────────────────────
 function openSetup() {
   const home = getPlace('home');
