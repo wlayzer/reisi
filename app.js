@@ -47,6 +47,7 @@ function getCachedRoute(key) {
 async function fetchDriveTime(from, to) {
   const url = `${OSRM_URL}/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false`;
   const res = await fetchWithTimeout(url);
+  if (!res.ok) return null;
   const json = await res.json();
   if (json.code !== 'Ok') return null;
   return Math.round(json.routes[0].duration / 60); // minutes
@@ -54,7 +55,8 @@ async function fetchDriveTime(from, to) {
 
 // ─── Prediction learning (Option A) ───────────────────────────────────────────
 function logPrediction(key, minutes) {
-  const slot = `pred_${key}_${new Date().getDay()}_${new Date().getHours()}`;
+  const now = new Date();
+  const slot = `pred_${key}_${now.getDay()}_${now.getHours()}`;
   const history = JSON.parse(localStorage.getItem(slot) || '[]');
   history.push(minutes);
   localStorage.setItem(slot, JSON.stringify(history.slice(-MAX_PREDICTION_HISTORY)));
@@ -280,7 +282,6 @@ function renderItinerary(it, destName) {
         <div class="leg-row">
           <div class="leg-line-col">
             <div class="leg-dot" style="background:${item.color}${item.isLast ? ';box-shadow:0 0 0 4px ' + item.color + '33;width:16px;height:16px' : ''}"></div>
-            ${!item.isLast ? '' : ''}
           </div>
           <div class="leg-content pb-0">
             <div class="flex items-center gap-2">
@@ -481,6 +482,7 @@ async function geocodeQuery(query) {
   const res = await fetchWithTimeout(`${GEOCODE_URL}?${params}`, {
     headers: { 'Accept-Language': 'et', 'User-Agent': 'ReisiApp/1.0' }
   });
+  if (!res.ok) throw new Error(`Nominatim viga ${res.status}`);
   const results = await res.json();
   return results.map(r => ({
     name: r.display_name.split(',').slice(0, 3).join(', '),
@@ -666,7 +668,7 @@ async function useGPS(key, btn) {
     const pos = await getLocation();
     // Reverse geocode to get a name
     const params = new URLSearchParams({ lat: pos.lat, lon: pos.lon, format: 'json', zoom: 17, addressdetails: 1 });
-    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`, {
+    const res = await fetchWithTimeout(`https://nominatim.openstreetmap.org/reverse?${params}`, {
       headers: { 'Accept-Language': 'et', 'User-Agent': 'ReisiApp/1.0' }
     });
     const data = await res.json();
@@ -687,6 +689,7 @@ let _quickInfoFrom = null;
 let _quickInfoInterval = null;
 let _quickInfoLastTs = 0;
 let _currentRouteKey = null;
+const _quickInfoData = { home: null, work: null }; // last fetched itinerary per card
 
 async function loadQuickInfo() {
   const home = getPlace('home');
@@ -748,18 +751,34 @@ async function updateCardQuickInfo(key, from) {
 
   // Check if already at destination (~200m radius)
   const dist = getDistanceMeters(from, dest);
-  if (dist < AT_DESTINATION_METERS) { el.textContent = '✓ Oled juba siin'; return; }
+  if (dist < AT_DESTINATION_METERS) {
+    _quickInfoData[key] = null;
+    el.textContent = '✓ Oled juba siin';
+    return;
+  }
 
   try {
     const itineraries = await fetchRoute(from, dest);
     if (!itineraries || !itineraries.length) { el.textContent = 'Marsruuti ei leitud'; return; }
     cacheRoute(key, itineraries);
     logPrediction(key, Math.round(itineraries[0].duration / 60));
+    _quickInfoData[key] = itineraries[0];
     const avg = getAvgPrediction(key);
     const avgText = avg ? ` · tavaliselt ~${avg} min` : '';
     el.textContent = buildQuickText(itineraries[0]) + avgText;
   } catch (e) {
     showCachedQuickInfo(key);
+  }
+}
+
+// ─── Refresh quick info text from cached data (runs every 60 s, no API call) ──
+function refreshQuickText() {
+  for (const key of ['home', 'work']) {
+    if (!_quickInfoData[key]) continue;
+    const el = document.getElementById(`${key}-quick`);
+    const avg = getAvgPrediction(key);
+    const avgText = avg ? ` · tavaliselt ~${avg} min` : '';
+    el.textContent = buildQuickText(_quickInfoData[key]) + avgText;
   }
 }
 
@@ -812,7 +831,8 @@ document.addEventListener('DOMContentLoaded', () => {
       weekday: 'long', hour: '2-digit', minute: '2-digit'
     });
     if (document.getElementById('screen-main').classList.contains('active')) {
-      updateMainScreen();
+      refreshQuickText(); // re-render "leave in X min" from cached data — no API call
+      updateMainScreen(); // triggers API refresh only if >5 min since last
     }
   }, QUICK_INFO_INTERVAL_MS);
 });
