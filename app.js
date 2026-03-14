@@ -1,6 +1,7 @@
 // ─── Config ───────────────────────────────────────────────────────────────────
 const API_URL = 'https://api.peatus.ee/routing/v1/routers/estonia/index/graphql';
 const GEOCODE_URL = 'https://nominatim.openstreetmap.org/search';
+const PELIAS_URL  = 'https://api.peatus.ee/geocoding/v1/autocomplete';
 
 // Mode display config
 const MODES = {
@@ -311,31 +312,52 @@ function showSearchHistory() {
   el.classList.remove('hidden');
 }
 
+async function geocodeQuery(query) {
+  // Try Pelias (peatus.ee) first — knows Estonian landmarks, stops, malls
+  try {
+    const params = new URLSearchParams({ text: query, lang: 'et', size: 5 });
+    // Bias results toward Estonia if we have a recent location
+    if (_quickInfoFrom) {
+      params.set('focus.point.lat', _quickInfoFrom.lat);
+      params.set('focus.point.lon', _quickInfoFrom.lon);
+    }
+    const res = await fetch(`${PELIAS_URL}?${params}`);
+    const json = await res.json();
+    if (json.features && json.features.length) {
+      return json.features.map(f => ({
+        name: f.properties.label || f.properties.name,
+        lat: f.geometry.coordinates[1],
+        lon: f.geometry.coordinates[0]
+      }));
+    }
+  } catch (e) { /* fall through to Nominatim */ }
+
+  // Fallback: Nominatim
+  const params = new URLSearchParams({ q: query, format: 'json', countrycodes: 'ee', limit: 5 });
+  const res = await fetch(`${GEOCODE_URL}?${params}`, {
+    headers: { 'Accept-Language': 'et', 'User-Agent': 'ReisiApp/1.0' }
+  });
+  const results = await res.json();
+  return results.map(r => ({
+    name: r.display_name.split(',').slice(0, 3).join(', '),
+    lat: parseFloat(r.lat),
+    lon: parseFloat(r.lon)
+  }));
+}
+
 async function runMainSearch(query) {
   const el = document.getElementById('main-search-results');
   el.innerHTML = '<p class="text-[#8B8FA8] text-xs px-4 py-3">Otsin...</p>';
   el.classList.remove('hidden');
 
   try {
-    const params = new URLSearchParams({ q: query, format: 'json', countrycodes: 'ee', limit: 5, addressdetails: 1 });
-    const res = await fetch(`${GEOCODE_URL}?${params}`, {
-      headers: { 'Accept-Language': 'et', 'User-Agent': 'ReisiApp/1.0' }
-    });
-    const results = await res.json();
-
+    const results = await geocodeQuery(query);
     if (!results.length) {
       el.innerHTML = '<p class="text-[#8B8FA8] text-xs px-4 py-3">Tulemusi ei leitud.</p>';
       return;
     }
-
-    // Store results temporarily for tap handler
-    window._searchResults = results.map(r => ({
-      name: r.display_name.split(',').slice(0, 3).join(', '),
-      lat: parseFloat(r.lat),
-      lon: parseFloat(r.lon)
-    }));
-
-    el.innerHTML = window._searchResults.map((r, i) => `
+    window._searchResults = results;
+    el.innerHTML = results.map((r, i) => `
       <button onclick="navigateTo(${i}, 'search')"
         class="w-full text-left px-4 py-3 text-sm flex items-center gap-3 border-t border-[#252838] first:border-0 active:bg-[#252838]">
         <span class="text-[#8B8FA8]">📍</span>
@@ -402,34 +424,18 @@ async function searchPlace(key) {
   resultsEl.innerHTML = '<p class="text-[#8B8FA8] text-xs px-1 py-2">Otsin...</p>';
 
   try {
-    const params = new URLSearchParams({
-      q: query,
-      format: 'json',
-      countrycodes: 'ee',
-      limit: 5,
-      addressdetails: 1
-    });
-    const res = await fetch(`${GEOCODE_URL}?${params}`, {
-      headers: { 'Accept-Language': 'et', 'User-Agent': 'ReisiApp/1.0' }
-    });
-    const results = await res.json();
+    const results = await geocodeQuery(query);
 
     if (!results.length) {
       resultsEl.innerHTML = '<p class="text-[#8B8FA8] text-xs px-1 py-2">Tulemusi ei leitud. Proovi täpsema nimega.</p>';
       return;
     }
 
-    resultsEl.innerHTML = results.map((r, i) => {
-      const displayName = r.display_name.split(',').slice(0, 3).join(', ');
-      return `<button onclick="selectPlace('${key}', ${i})" data-result='${JSON.stringify({
-        name: displayName,
-        lat: parseFloat(r.lat),
-        lon: parseFloat(r.lon)
-      }).replace(/'/g, '&#39;')}'
+    resultsEl.innerHTML = results.map((r, i) => `
+      <button onclick="selectPlace('${key}', ${i})" data-result='${JSON.stringify(r).replace(/'/g, '&#39;')}'
         class="w-full text-left bg-[#13141F] border border-[#252838] rounded-xl px-4 py-3 text-sm hover:border-[#3D9CF0] transition-colors">
-        <span class="block font-medium truncate">${displayName}</span>
-      </button>`;
-    }).join('');
+        <span class="block font-medium truncate">${r.name}</span>
+      </button>`).join('');
 
   } catch (e) {
     resultsEl.innerHTML = '<p class="text-[#8B8FA8] text-xs px-1 py-2">Viga otsingus. Kontrolli internetiühendust.</p>';
